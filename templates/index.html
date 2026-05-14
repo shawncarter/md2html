@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MD Preview</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; height: 100vh; overflow: hidden; font-family: system-ui, sans-serif; }
+
+  #sidebar {
+    width: 220px;
+    min-width: 220px;
+    background: #2a2a2a;
+    color: #fff;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow-y: auto;
+  }
+  #sidebar h2 { margin: 0 0 0.25rem; font-size: 1.1rem; color: #fff; }
+
+  #pick-btn, #print-btn {
+    width: 100%;
+    background: #0066cc;
+    color: #fff;
+    border: none;
+    padding: 0.5rem;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 0.9rem;
+  }
+  #pick-btn:hover, #print-btn:hover { background: #0055aa; }
+
+  #file-name { font-size: 0.72rem; color: #aaa; word-break: break-all; }
+
+  label { font-size: 0.8rem; color: #ccc; margin-bottom: -0.25rem; }
+
+  #css-select {
+    width: 100%;
+    padding: 0.3rem;
+    background: #3a3a3a;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+  }
+  #css-select:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .toggle-group { display: flex; gap: 0.5rem; }
+  .toggle-btn {
+    flex: 1;
+    padding: 0.4rem;
+    background: #444;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  .toggle-btn.active { background: #0066cc; }
+  .toggle-btn:hover:not(.active) { background: #555; }
+
+  #spacer { flex: 1; }
+
+  #right-panel { flex: 1; position: relative; height: 100%; overflow: hidden; }
+
+  #drop-overlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 102, 204, 0.12);
+    border: 3px dashed #0066cc;
+    z-index: 10;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4rem;
+    color: #0066cc;
+    pointer-events: none;
+  }
+  #drop-overlay.active { display: flex; }
+
+  #margin-group { display: flex; gap: 0.35rem; }
+  #margin-group .toggle-btn { font-size: 0.75rem; padding: 0.3rem 0; }
+
+  #recent-section label { display: block; margin-bottom: 0.25rem; }
+  #recent-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  #recent-list li {
+    font-size: 0.75rem;
+    color: #bbb;
+    cursor: pointer;
+    padding: 0.25rem 0.4rem;
+    border-radius: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #recent-list li:hover { background: #3a3a3a; color: #fff; }
+  #recent-list li.active-recent { color: #fff; font-weight: bold; }
+  #recent-empty { font-size: 0.72rem; color: #555; }
+
+  #preview-frame {
+    flex: 1;
+    height: 100%;
+    border: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>MD Preview</h2>
+
+  <input type="file" id="file-input" accept=".md" style="display:none">
+  <button id="pick-btn">Load File</button>
+  <span id="file-name">No file loaded</span>
+
+  <label for="css-select">Style</label>
+  <select id="css-select">
+    {% for f in css_files %}
+    <option value="{{ f }}">{{ f }}</option>
+    {% endfor %}
+  </select>
+
+  <label>View</label>
+  <div class="toggle-group">
+    <button id="btn-web" class="toggle-btn active">Web</button>
+    <button id="btn-page" class="toggle-btn">Page</button>
+  </div>
+
+  <label id="margin-label" style="display:none">Page Margins</label>
+  <div id="margin-group" class="toggle-group" style="display:none">
+    <button class="toggle-btn margin-btn" data-margin="small">Small</button>
+    <button class="toggle-btn margin-btn active" data-margin="medium">Medium</button>
+    <button class="toggle-btn margin-btn" data-margin="large">Large</button>
+  </div>
+
+  <button id="print-btn">Print</button>
+  <button id="reset-breaks-btn" style="display:none;width:100%;background:#555;color:#fff;border:none;padding:0.5rem;cursor:pointer;border-radius:4px;font-size:0.9rem">Reset Breaks</button>
+
+  <div id="recent-section">
+    <label>Recent</label>
+    <ul id="recent-list"><li id="recent-empty">None yet</li></ul>
+  </div>
+
+  <div id="spacer"></div>
+</div>
+
+<div id="right-panel">
+  <div id="drop-overlay">Drop .md file here</div>
+  <iframe id="preview-frame" style="width:100%;height:100%;border:none;display:block"></iframe>
+</div>
+
+<script>
+  let mdContent = '';
+  let viewMode = 'web';
+  let activeName = '';
+  let pageMargin = 'medium';
+
+  const MARGINS = { small: '1.2cm', medium: '1.8cm', large: '2.5cm' };
+
+  function getPageCSS() {
+    return `
+@page { size: A4; margin: ${MARGINS[pageMargin]}; }
+body { background: #888; max-width: none; margin: 0; padding: 2rem 0; }
+.pagedjs_page {
+  background: white !important;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.4);
+  margin: 0 auto 2rem !important;
+}
+.page-break { break-before: page; }
+h1, h2, h3, thead { break-after: avoid; }
+h1 + p, h2 + p, h3 + p,
+h1 + ul, h2 + ul, h3 + ul,
+h1 + ol, h2 + ol, h3 + ol { orphans: 3; }
+tr { break-inside: avoid; }
+.admonition { break-inside: avoid; }
+table { font-size: 0.8rem; }
+th, td { padding: 0.3rem 0.5rem; }
+`;
+  }
+
+  const RECENT_KEY = 'md2html_recent';
+  const MAX_RECENT = 8;
+
+  function getRecent() {
+    try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; }
+    catch { return []; }
+  }
+
+  function saveRecent(name, content, css) {
+    let recent = getRecent().filter(r => r.name !== name);
+    recent.unshift({ name, content, css, ts: Date.now() });
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, MAX_RECENT)));
+    renderRecentList();
+  }
+
+  function renderRecentList() {
+    const list = document.getElementById('recent-list');
+    const recent = getRecent();
+    if (recent.length === 0) {
+      list.innerHTML = '<li id="recent-empty">None yet</li>';
+      return;
+    }
+    list.innerHTML = '';
+    recent.forEach(r => {
+      const li = document.createElement('li');
+      li.textContent = r.name;
+      li.title = r.name;
+      if (r.name === activeName) li.classList.add('active-recent');
+      li.addEventListener('click', () => {
+        mdContent = r.content;
+        activeName = r.name;
+        document.getElementById('file-name').textContent = r.name;
+        if (r.css) {
+          if (viewMode === 'web') cssSelect.value = r.css;
+          else savedCss = r.css;
+        }
+        renderRecentList();
+        renderPreview();
+      });
+      list.appendChild(li);
+    });
+  }
+
+
+  const fileInput = document.getElementById('file-input');
+  const pickBtn   = document.getElementById('pick-btn');
+  const fileName  = document.getElementById('file-name');
+  const cssSelect = document.getElementById('css-select');
+  const btnWeb    = document.getElementById('btn-web');
+  const btnPage   = document.getElementById('btn-page');
+  const printBtn  = document.getElementById('print-btn');
+  const frame     = document.getElementById('preview-frame');
+
+  // restore last used CSS
+  const lastCss = localStorage.getItem('md2html_last_css');
+  if (lastCss) cssSelect.value = lastCss;
+
+  pickBtn.addEventListener('click', () => fileInput.click());
+
+  async function loadFile(file) {
+    if (!file || !file.name.endsWith('.md')) return;
+    mdContent = await file.text();
+    activeName = file.name;
+    fileName.textContent = file.name;
+    saveRecent(file.name, mdContent, cssSelect.value);
+    renderPreview();
+  }
+
+  fileInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
+
+  renderRecentList();
+
+  cssSelect.addEventListener('change', () => {
+    localStorage.setItem('md2html_last_css', cssSelect.value);
+    if (mdContent) renderPreview();
+  });
+
+  let savedCss = null;
+
+  btnWeb.addEventListener('click', () => {
+    viewMode = 'web';
+    btnWeb.classList.add('active');
+    btnPage.classList.remove('active');
+    if (savedCss !== null) { cssSelect.value = savedCss; savedCss = null; }
+    cssSelect.disabled = false;
+    document.getElementById('margin-label').style.display = 'none';
+    document.getElementById('margin-group').style.display = 'none';
+    document.getElementById('reset-breaks-btn').style.display = 'none';
+    if (mdContent) renderPreview();
+  });
+
+  btnPage.addEventListener('click', () => {
+    viewMode = 'page';
+    btnPage.classList.add('active');
+    btnWeb.classList.remove('active');
+    if (cssSelect.value !== 'style.css') { savedCss = cssSelect.value; cssSelect.value = 'style.css'; }
+    cssSelect.disabled = true;
+    document.getElementById('margin-label').style.display = '';
+    document.getElementById('margin-group').style.display = '';
+    document.getElementById('reset-breaks-btn').style.display = '';
+    if (mdContent) renderPreview();
+  });
+
+  document.querySelectorAll('.margin-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      pageMargin = btn.dataset.margin;
+      document.querySelectorAll('.margin-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      if (mdContent) renderPreview();
+    });
+  });
+
+  printBtn.addEventListener('click', async () => {
+    if (viewMode === 'page') { frame.contentWindow?.print(); return; }
+    // Web view: render via paged.js in a hidden iframe so print matches page view
+    const res = await fetch('/render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: mdContent, css: 'style.css' })
+    });
+    const { html, css } = await res.json();
+    const pf = document.createElement('iframe');
+    pf.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;';
+    document.body.appendChild(pf);
+    pf.srcdoc = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><base href="about:blank">
+<style>${css}${getPageCSS()}</style>
+<script src="https://unpkg.com/pagedjs/dist/paged.polyfill.js"><\/script>
+</head><body>${html}</body></html>`;
+    pf.addEventListener('load', function() {
+      const win = pf.contentWindow;
+      let debounce;
+      const obs = new MutationObserver(function() {
+        clearTimeout(debounce);
+        debounce = setTimeout(function() {
+          obs.disconnect();
+          win.print();
+          setTimeout(() => pf.remove(), 1000);
+        }, 50);
+      });
+      obs.observe(win.document.body, { childList: true, subtree: true });
+    });
+  });
+
+  document.getElementById('reset-breaks-btn').addEventListener('click', () => {
+    mdContent = mdContent.split('\n')
+      .filter(l => !l.includes('page-break'))
+      .join('\n');
+    saveRecent(activeName, mdContent, cssSelect.value);
+    renderPreview();
+  });
+
+  // drag and drop
+  const dropOverlay = document.getElementById('drop-overlay');
+  let dragCount = 0;
+  document.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragCount++;
+    dropOverlay.classList.add('active');
+  });
+  document.addEventListener('dragleave', () => {
+    dragCount--;
+    if (dragCount === 0) dropOverlay.classList.remove('active');
+  });
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragCount = 0;
+    dropOverlay.classList.remove('active');
+    loadFile(e.dataTransfer.files[0]);
+  });
+
+  const PAGE_BREAK_UI_CSS = `
+h1, h2, h3 { position: relative; }
+.pbk-btn {
+  display: inline-block; vertical-align: middle; margin-left: 0.6rem;
+  background: none; border: 1px solid transparent; border-radius: 3px;
+  font-size: 0.65rem; cursor: pointer; padding: 1px 5px; opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+  font-family: system-ui, sans-serif; line-height: 1.4;
+}
+h1:hover .pbk-btn, h2:hover .pbk-btn, h3:hover .pbk-btn { opacity: 1; }
+.pbk-btn.has-break { color: #c33; border-color: #c33; }
+.pbk-btn:not(.has-break) { color: #0066cc; border-color: #0066cc; }
+`;
+
+  const PAGE_BREAK_UI_JS = `
+(function() {
+  function addBtn(h) {
+    // Always strip existing buttons — paged.js clones nodes without event listeners
+    h.querySelectorAll('.pbk-btn').forEach(function(b) { b.remove(); });
+    var text = h.textContent.trim();
+    var forced = parent.mdHasBreakBefore && parent.mdHasBreakBefore(text);
+    var btn = document.createElement('button');
+    btn.className = 'pbk-btn' + (forced ? ' has-break' : '');
+    btn.textContent = forced ? '\\u2715 break' : '\\u21b5 break';
+    btn.title = forced ? 'Remove forced page break' : 'Force page break before here';
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      parent.postMessage({ type: 'toggle-break', headingText: text }, '*');
+    });
+    h.appendChild(btn);
+  }
+  var busy = false;
+  var obs = new MutationObserver(function(mutations) {
+    if (busy) return;
+    busy = true;
+    mutations.forEach(function(m) {
+      m.addedNodes.forEach(function(node) {
+        if (node.nodeType !== 1) return;
+        if (/^H[1-3]$/.test(node.tagName)) addBtn(node);
+        else node.querySelectorAll('h1,h2,h3').forEach(addBtn);
+      });
+    });
+    busy = false;
+  });
+  obs.observe(document.body, { childList: true, subtree: true });
+})();
+`;
+
+  window.mdHasBreakBefore = function(headingText) {
+    var lines = mdContent.split('\n');
+    var idx = lines.findIndex(function(l) {
+      return /^#{1,3} /.test(l) && l.replace(/^#+\s+/, '').trim() === headingText;
+    });
+    if (idx <= 0) return false;
+    for (var i = idx - 1; i >= Math.max(0, idx - 3); i--) {
+      if (lines[i].includes('page-break')) return true;
+    }
+    return false;
+  };
+
+  window.addEventListener('message', function(e) {
+    if (!e.data || e.data.type !== 'toggle-break') return;
+    var text = e.data.headingText;
+    var lines = mdContent.split('\n');
+    var idx = lines.findIndex(function(l) {
+      return /^#{1,3} /.test(l) && l.replace(/^#+\s+/, '').trim() === text;
+    });
+    if (idx === -1) return;
+    var hasBreak = window.mdHasBreakBefore(text);
+    if (hasBreak) {
+      for (var i = idx - 1; i >= Math.max(0, idx - 3); i--) {
+        if (lines[i].includes('page-break')) { lines.splice(i, 1); break; }
+      }
+    } else {
+      lines.splice(idx, 0, '<div class="page-break"></div>');
+    }
+    mdContent = lines.join('\n');
+    saveRecent(activeName, mdContent, cssSelect.value);
+    renderPreview();
+  });
+
+  async function renderPreview() {
+    const prevScroll = frame.contentWindow?.scrollY ?? 0;
+    const res = await fetch('/render', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: mdContent, css: cssSelect.value })
+    });
+    const { html, css } = await res.json();
+    const isPage = viewMode === 'page';
+    const extraCSS = isPage
+      ? getPageCSS() + PAGE_BREAK_UI_CSS
+      : '.page-break { display: none; }';
+    const pagedScript = isPage
+      ? `<script src="https://unpkg.com/pagedjs/dist/paged.polyfill.js"><\/script>`
+      : '';
+    const breakScript = isPage ? PAGE_BREAK_UI_JS : '';
+    const body = isPage ? html : `<div class="container">${html}</div>`;
+    frame.srcdoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<base href="about:blank">
+<style>${css}${extraCSS}</style>
+${pagedScript}
+</head>
+<body>${body}<script>
+document.addEventListener('click', function(e) {
+  var a = e.target.closest('a[href^="#"]');
+  if (!a) return;
+  e.preventDefault();
+  var el = document.getElementById(a.getAttribute('href').slice(1));
+  if (el) el.scrollIntoView({ behavior: 'smooth' });
+});
+${breakScript}
+<\/script></body>
+</html>`;
+
+    if (prevScroll > 0) {
+      frame.addEventListener('load', function onLoad() {
+        frame.removeEventListener('load', onLoad);
+        const win = frame.contentWindow;
+        if (!win) return;
+        if (viewMode === 'page') {
+          let debounce;
+          const obs = new MutationObserver(function() {
+            clearTimeout(debounce);
+            debounce = setTimeout(function() {
+              obs.disconnect();
+              win.scrollTo(0, prevScroll);
+            }, 50);
+          });
+          obs.observe(win.document.body, { childList: true, subtree: true });
+        } else {
+          win.scrollTo(0, prevScroll);
+        }
+      });
+    }
+  }
+</script>
+</body>
+</html>
