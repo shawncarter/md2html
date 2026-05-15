@@ -10,6 +10,7 @@ def convert(md_path: Path, css_content: str | None, output_path: Path) -> None:
     html_body = markdown.markdown(
         md_text,
         extensions=["tables", "fenced_code", "toc", "attr_list", "admonition", "pymdownx.tilde"],
+        extension_configs={"toc": {"toc_depth": 2}},
     )
     style_tag = f"<style>\n{css_content}\n</style>" if css_content else ""
     html = f"""<!DOCTYPE html>
