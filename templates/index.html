@@ -21,7 +21,7 @@
   }
   #sidebar h2 { margin: 0 0 0.25rem; font-size: 1.1rem; color: #fff; }
 
-  #pick-btn, #print-btn {
+  #pick-btn, #print-btn, #save-btn {
     width: 100%;
     background: #0066cc;
     color: #fff;
@@ -31,7 +31,10 @@
     border-radius: 4px;
     font-size: 0.9rem;
   }
-  #pick-btn:hover, #print-btn:hover { background: #0055aa; }
+  #pick-btn:hover, #print-btn:hover, #save-btn:hover { background: #0055aa; }
+  #save-btn { background: #2a7a2a; }
+  #save-btn:hover { background: #236023; }
+  #save-btn:disabled { opacity: 0.4; cursor: not-allowed; background: #2a7a2a; }
 
   #file-name { font-size: 0.72rem; color: #aaa; word-break: break-all; }
 
@@ -143,6 +146,7 @@
   </div>
 
   <button id="print-btn">Print</button>
+  <button id="save-btn" disabled>Save HTML</button>
   <button id="reset-breaks-btn" style="display:none;width:100%;background:#555;color:#fff;border:none;padding:0.5rem;cursor:pointer;border-radius:4px;font-size:0.9rem">Reset Breaks</button>
 
   <div id="recent-section">
@@ -238,6 +242,7 @@ th, td { padding: 0.3rem 0.5rem; }
   const btnWeb    = document.getElementById('btn-web');
   const btnPage   = document.getElementById('btn-page');
   const printBtn  = document.getElementById('print-btn');
+  const saveBtn   = document.getElementById('save-btn');
   const frame     = document.getElementById('preview-frame');
 
   // restore last used CSS
@@ -251,6 +256,7 @@ th, td { padding: 0.3rem 0.5rem; }
     mdContent = await file.text();
     activeName = file.name;
     fileName.textContent = file.name;
+    saveBtn.disabled = false;
     saveRecent(file.name, mdContent, cssSelect.value);
     renderPreview();
   }
@@ -329,6 +335,25 @@ th, td { padding: 0.3rem 0.5rem; }
       });
       obs.observe(win.document.body, { childList: true, subtree: true });
     });
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    if (!mdContent || !activeName) return;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+    try {
+      const res = await fetch('/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: mdContent, css: cssSelect.value, filename: activeName })
+      });
+      const data = await res.json();
+      saveBtn.textContent = 'Saved: ' + data.saved;
+      setTimeout(() => { saveBtn.textContent = 'Save HTML'; saveBtn.disabled = false; }, 2500);
+    } catch {
+      saveBtn.textContent = 'Error!';
+      setTimeout(() => { saveBtn.textContent = 'Save HTML'; saveBtn.disabled = false; }, 2500);
+    }
   });
 
   document.getElementById('reset-breaks-btn').addEventListener('click', () => {
